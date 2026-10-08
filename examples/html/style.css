@@ -1,0 +1,16 @@
+:root {
+  --color-paper: #fafaf9;
+  --color-ink: #0a0a0a;
+  --color-accent: #f65009;
+  font-family: system-ui, sans-serif;
+}
+:root[data-theme="dark"] {
+  --color-paper: #0a0a0a;
+  --color-ink: #fafaf9;
+}
+body { margin: 0; background: var(--color-paper); color: var(--color-ink); }
+header, footer { padding: 16px 24px; border-bottom: 1px solid #0001; }
+footer { border-top: 1px solid #0001; border-bottom: 0; opacity: .7; }
+section { padding: 64px 24px; border-bottom: 1px solid #0001; }
+h1 { font-size: 48px; letter-spacing: -0.03em; margin: 0 0 12px; }
+.cta { display: inline-block; padding: 12px 20px; background: var(--color-accent); color: #fff; border-radius: 4px; text-decoration: none; }

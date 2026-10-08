@@ -1,0 +1,7 @@
+:root { --color-accent: #646cff; font-family: system-ui, sans-serif; }
+body { margin: 0; }
+header, footer { padding: 16px 24px; }
+section { padding: 64px 24px; border-top: 1px solid #0001; }
+.hero.centered { text-align: center; }
+h1 { font-size: 48px; margin: 0 0 12px; }
+.cta { display: inline-block; padding: 12px 20px; background: var(--color-accent); color: #fff; border-radius: 6px; text-decoration: none; }

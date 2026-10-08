@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plain HTML · dsgn-tweaks</title>
+    <link rel="stylesheet" href="style.css" />
+    <!-- Run `pnpm dev` here and the panel is added for you. Without a server, add:
+         <script src="https://cdn.jsdelivr.net/gh/TheStevenShyaka/dsgn-tweaks@main/dist/dsgn-tweaks.global.js"></script> -->
+    <script>
+      window.dsgnTweaks = {
+        tokens: [
+          { key: "paper", label: "Paper", light: "#fafaf9", dark: "#0a0a0a" },
+          { key: "ink", label: "Ink", light: "#0a0a0a", dark: "#fafaf9" },
+          { key: "accent", label: "Accent", light: "#f65009" },
+        ],
+        theme: { attribute: "data-theme" },
+      };
+    </script>
+  </head>
+  <body>
+    <header>Acme</header>
+    <main data-design-root>
+      <section id="hero">
+        <h1>Plain HTML, designed live.</h1>
+        <p>No framework, no build step. Press ⌥D.</p>
+      </section>
+      <section id="features">
+        <h2>Features</h2>
+        <p>Fast. Accessible. Yours.</p>
+      </section>
+      <section id="contact">
+        <a class="cta" href="#contact">Talk to us</a>
+      </section>
+    </main>
+    <footer>© Acme</footer>
+  </body>
+</html>

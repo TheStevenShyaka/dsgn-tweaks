@@ -1,0 +1,12 @@
+{
+  "name": "dsgn-tweaks-example-vite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5180"
+  },
+  "devDependencies": {
+    "dsgn-tweaks": "link:../..",
+    "vite": "^8.3.3"
+  }
+}

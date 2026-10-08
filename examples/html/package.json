@@ -1,0 +1,10 @@
+{
+  "name": "dsgn-tweaks-example-html",
+  "private": true,
+  "scripts": {
+    "dev": "dsgn-tweaks . --port 4800"
+  },
+  "devDependencies": {
+    "dsgn-tweaks": "link:../.."
+  }
+}
