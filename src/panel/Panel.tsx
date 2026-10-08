@@ -374,7 +374,7 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
     [],
   );
 
-  const count = store.changeCount(tweaks);
+  const count = store.unsentCount(tweaks);
   const previewQuery = new URLSearchParams(params.toString());
   previewQuery.set("design", "frame");
   const scale = viewport ? Math.min(1, (width - 48) / viewport) : 1;
@@ -854,7 +854,7 @@ function ChangesTab({ tweaks }: { tweaks: Tweaks }) {
             {tweaks.text.map((e) => (
               <Change
                 key={e.id}
-                meta={`${sectionLabel(e.scope)} · ${e.tag}${e.layout ? ` · ${e.layout.split(":")[1]}` : ""}`}
+                meta={`${sectionLabel(e.scope)} · ${e.tag}${e.layout ? ` · ${e.layout.split(":")[1]}` : ""}${store.isSent(tweaks, "text", e.id) ? ` · with ${agent()}` : ""}`}
                 onRevert={() => store.update((t) => ({ ...t, text: t.text.filter((x) => x.id !== e.id) }))}
               >
                 <span className="text-white/40 line-through">{e.original}</span>
@@ -871,7 +871,7 @@ function ChangesTab({ tweaks }: { tweaks: Tweaks }) {
             {tweaks.styles.map((e) => (
               <Change
                 key={e.id}
-                meta={`${sectionLabel(e.scope)} · at ${e.viewport}px${e.layout ? ` · ${e.layout.split(":")[1]}` : ""}`}
+                meta={`${sectionLabel(e.scope)} · at ${e.viewport}px${e.layout ? ` · ${e.layout.split(":")[1]}` : ""}${store.isSent(tweaks, "styles", e.id) ? ` · with ${agent()}` : ""}`}
                 onRevert={() => store.update((t) => ({ ...t, styles: t.styles.filter((x) => x.id !== e.id) }))}
               >
                 <span className="text-white">{e.label}</span>
@@ -946,7 +946,7 @@ function ChangesTab({ tweaks }: { tweaks: Tweaks }) {
             disabled={empty}
             onClick={() => {
               if (window.confirm("Discard every design change and message?"))
-                store.update((t) => ({ ...store.EMPTY, layout: t.layout, sent: t.sent, reply: t.reply }));
+                store.update((t) => ({ ...store.EMPTY, layout: t.layout, sent: t.sent, dismissedReply: t.dismissedReply }));
             }}
             className="ml-auto flex h-7 items-center gap-1.5 rounded-[4px] px-2.5 text-red-300/80 hover:bg-red-400/10 disabled:opacity-30"
           >
@@ -1002,48 +1002,61 @@ function Messages({ tweaks }: { tweaks: Tweaks }) {
   );
 }
 
-/** What happened to the last batch: still with the agent, or its answer once it is in the code. */
+/**
+ * Where the last batch is. The server's outbox decides "implementing" (a batch waits there until the
+ * agent finishes it), and the agent's reply lives in its own file, so nothing in the browser can fake either.
+ */
 function AgentStatus({ tweaks }: { tweaks: Tweaks }) {
-  // Browser-only mode has no agent on the other end: the batch was downloaded instead.
-  if (store.isLocal() && tweaks.sent && store.alreadySent(tweaks))
+  const inbox = useSyncExternalStore(store.subscribe, store.getInbox);
+  const batch = tweaks.sent;
+  if (store.isLocal()) {
+    if (!batch || store.unsentCount(tweaks) > 0) return null;
     return (
       <div className="flex items-center gap-2 border-b border-white/10 bg-[#0d99ff]/10 px-3 py-2.5 text-[11px] text-[#9fd3ff]">
         <Check className="size-3.5 shrink-0" />
-        Downloaded {tweaks.sent.count} change{tweaks.sent.count === 1 ? "" : "s"} at {clock(tweaks.sent.at)} (also copied). Hand the file to {agent()}.
+        Downloaded {batch.count} change{batch.count === 1 ? "" : "s"} at {clock(batch.at)} (also copied). Hand the file to {agent()}.
       </div>
     );
-  if (store.isPending(tweaks) && tweaks.sent && !store.isLocal())
+  }
+  if (inbox.pending > 0)
     return (
       <div className="flex items-center gap-2 border-b border-white/10 bg-amber-300/10 px-3 py-2.5 text-[11px] text-amber-100">
         <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
-        Sent {tweaks.sent.count} change{tweaks.sent.count === 1 ? "" : "s"} at {clock(tweaks.sent.at)}. {agent()} is implementing them.
+        {batch && !batch.done
+          ? `Sent ${batch.count} change${batch.count === 1 ? "" : "s"} at ${clock(batch.at)} as one batch. ${agent()} is implementing them.`
+          : `A batch is waiting for ${agent()}.`}
       </div>
     );
-  if (!tweaks.reply) return null;
+  const reply = inbox.reply;
+  if (!reply || reply.at === tweaks.dismissedReply) return null;
   return (
     <div className="flex items-start gap-2 border-b border-white/10 bg-emerald-400/10 px-3 py-2.5 text-[11px] text-emerald-50">
       <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
       <p className="min-w-0 flex-1 whitespace-pre-wrap leading-relaxed">
-        <span className="text-emerald-300">{agent()} · {clock(tweaks.reply.at)}</span>
+        <span className="text-emerald-300">{agent()} · {clock(reply.at)}</span>
         {"\n"}
-        {tweaks.reply.text}
+        {reply.text}
       </p>
-      <IconButton label="Dismiss" onClick={() => store.update((t) => ({ ...t, reply: undefined }))}>
+      <IconButton label="Dismiss" onClick={() => store.update((t) => ({ ...t, dismissedReply: reply.at }))}>
         <X />
       </IconButton>
     </div>
   );
 }
 
-/** The one way changes reach the code: everything queued goes to the agent in a single batch. */
+/**
+ * The one way changes reach the code: everything queued goes to the agent as a single batch. While a
+ * batch is with the agent, new edits keep queueing for the next Send.
+ */
 function SendBar({ tweaks, status }: { tweaks: Tweaks; status: store.SaveStatus }) {
+  const inbox = useSyncExternalStore(store.subscribe, store.getInbox);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const count = store.changeCount(tweaks);
+  const count = store.unsentCount(tweaks);
   const local = status === "local";
-  const pending = !local && store.isPending(tweaks);
-  const waiting = (pending || local) && store.alreadySent(tweaks);
+  const pending = !local && inbox.pending > 0;
   const ready = status === "saved" || local;
+  const plural = (n: number) => `${n} change${n === 1 ? "" : "s"}`;
 
   const send = () => {
     setBusy(true);
@@ -1058,36 +1071,38 @@ function SendBar({ tweaks, status }: { tweaks: Tweaks; status: store.SaveStatus 
     ? "Couldn't send. Is the dev server running?"
     : status === "error"
       ? "Can't save. Is the dev server running?"
-      : pending && tweaks.sent
-        ? `Sent at ${clock(tweaks.sent.at)} · ${agent()} is on it`
+      : pending
+        ? count
+          ? `${agent()} is on the last batch · ${plural(count)} queued for the next Send`
+          : `${agent()} is implementing the batch you sent`
         : status === "saving"
           ? "Saving…"
           : status === "loading"
             ? "Loading…"
             : local
               ? "No dev server: saved in this browser, Send downloads the batch"
-              : "Changes show here only, until you send them";
+              : "Changes queue here and only change what you see, until you Send";
 
   return (
     <footer className="grid gap-2 border-t border-white/10 px-3 py-2.5">
       <button
         type="button"
-        disabled={!count || busy || waiting || !ready}
+        disabled={!count || busy || pending || !ready}
         onClick={send}
         className="flex h-8 items-center justify-center gap-2 rounded-[4px] bg-[#0d99ff] text-[12px] font-semibold text-white transition-colors hover:bg-[#0a85e0] disabled:bg-white/10 disabled:text-white/35"
       >
-        {busy ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+        {busy || pending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
         {busy
           ? "Sending…"
-          : waiting
-            ? local
-              ? "Downloaded · change something to send again"
-              : `Sent, waiting for ${agent()}`
+          : pending
+            ? `With ${agent()} · Send opens when it's done`
             : count
               ? local
-                ? `Download ${count} change${count === 1 ? "" : "s"} for ${agent()}`
-                : `${pending ? "Send again with new changes" : `Send ${count} change${count === 1 ? "" : "s"} to ${agent()}`}`
-              : "Nothing to send yet"}
+                ? `Download ${plural(count)} for ${agent()}`
+                : `Send ${plural(count)} to ${agent()}`
+              : local && tweaks.sent
+                ? "Downloaded · change something to send again"
+                : "Nothing queued"}
       </button>
       <p className="flex items-center gap-2 text-[11px] text-white/50">
         <span
