@@ -26,7 +26,7 @@ Pages without a dev server (the script tag on its own) can't write files: Send d
 | `text[]` | `scope` (section key), `original` (text as it shipped), `nth` (which occurrence of that string in the section), `value` (new text), `tag`, and `layout` if it was made inside an exploration. |
 | `styles[]` | `scope` and `path` (child-index steps from the section to the element), `tag`, `className` (its Tailwind classes, the best way to find it in source), `label` (a text snippet), `viewport` (window width when edited) and `props` (CSS properties to set). |
 | `messages[]` | Free-text requests in the person's words. Treat each as a task. |
-| `sent` | When it was sent and how many changes it holds. |
+| `sent` | When it was sent, how many changes it holds, and the ids of the edits and messages in it. |
 
 ## Applying it
 
@@ -39,7 +39,7 @@ Pages without a dev server (the script tag on its own) can't write files: Send d
 
 ## Finishing
 
-1. Move the snapshot to `.design/done/`.
-2. In `.design/tweaks.json`, remove only the entries that were in the batch (match `text`/`styles` by `id`, messages by `id`), since the person may have kept editing while you worked.
-3. Set `reply: { "at": <ISO now>, "text": <one or two sentences on what you did> }` and a fresh `updatedAt`. Open panels adopt only a strictly newer `updatedAt`, then show your reply.
+1. Move the snapshot out of the outbox, to `.design/done/`. That is the signal the panel watches: while a batch sits in the outbox, it shows "implementing" and keeps Send locked. Once the outbox is empty, it removes the batch's edits from its list (they're in the code now) and opens Send again.
+2. Write `.design/reply.json` as `{ "at": <ISO now>, "text": <one or two sentences on what you did> }`. The panel shows it in the Changes tab.
+3. Don't edit `.design/tweaks.json`. Only the panel writes it, so you can never race the person's open tab.
 4. Commit following the project's own conventions.

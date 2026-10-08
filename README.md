@@ -157,7 +157,12 @@ Pass it to the Vite plugin, `<DsgnTweaks config>`, `init()`, or set `window.dsgn
 
 ## Sending to your agent
 
-Changes autosave to `.design/tweaks.json` as you work, but they only change what you see. **Send** writes the whole batch to `.design/outbox/<time>.json`. Your agent implements it in your source and replies, and the reply shows up in the panel. [AGENTS.md](AGENTS.md) is the guide to give your agent.
+Changes autosave to `.design/tweaks.json` as you work, but they only change what you see; they queue in the Changes tab. **Send** hands everything queued to your agent as one batch, written to `.design/outbox/<time>.json`. While the agent works:
+
+- The panel shows "implementing" and locks Send.
+- Items already sent are tagged "with Claude", and anything new you edit queues for the next Send.
+
+When the agent moves the batch out of the outbox, the panel clears what was sent and shows the agent's reply from `.design/reply.json`. [AGENTS.md](AGENTS.md) is the guide to give your agent.
 
 Add `/.design/` to your `.gitignore`.
 
