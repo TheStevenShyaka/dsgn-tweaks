@@ -14,6 +14,8 @@ until ls .design/outbox/*.json >/dev/null 2>&1; do sleep 3; done
 
 At the start of a session, check the outbox for batches nobody has handled yet.
 
+Pages without a dev server (the script tag on its own) can't write files: Send downloads the batch as `dsgn-tweaks-<time>.json` and copies it to the clipboard. When the person hands you that file or pastes the JSON, treat it exactly like an outbox batch; there is no `tweaks.json` to update afterwards.
+
 ## What a batch contains
 
 | Field | Meaning |
