@@ -1,0 +1,7 @@
+/* The panel's own stylesheet, compiled at build time and injected into its shadow root. */
+@import "tailwindcss" source(none);
+@source "./";
+
+:host {
+  all: initial;
+}

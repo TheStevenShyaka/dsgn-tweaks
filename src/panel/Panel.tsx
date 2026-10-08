@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { ComponentChildren as ReactNode } from "preact";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useSyncExternalStore } from "preact/compat";
 import {
   ChevronDown,
   ChevronUp,
@@ -24,10 +24,11 @@ import {
   Check,
   LoaderCircle,
   Send,
-} from "lucide-react";
-import { getConfig, setConfig, themeAttribute, type DesignTweaksConfig, type Exploration } from "./config";
-import * as store from "./store";
-import type { StyleEdit, TextEdit, Tweaks } from "./store";
+} from "lucide-preact";
+import { getConfig, themeAttribute, type Exploration } from "../core/config";
+import { getSearch, navigate, subscribeLocation } from "../core/location";
+import * as store from "../core/store";
+import type { StyleEdit, TextEdit, Tweaks } from "../core/store";
 import {
   applyAll,
   editInline,
@@ -48,10 +49,11 @@ import {
   listSections,
   sectionLabel,
   type TextLocation,
-} from "./engine";
+  pageStyle,
+} from "../core/engine";
 
 /**
- * dsgn-tweaks (⌥D): a dev-only panel for trying design changes on a running Next.js page.
+ * dsgn-tweaks (⌥D): a dev-only panel for trying design changes on a running page, any framework.
  * Layout explorations, inline text editing, an element inspector, colour tokens, grid/outline
  * overlays and viewport previews. Changes stay visual, saved to .design/tweaks.json, until Send
  * drops the batch in .design/outbox/ for an agent to implement in the source.
@@ -65,7 +67,11 @@ const OPEN_KEY = "dsgn-tweaks-open";
 const BLUE = "#0d99ff";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const subscribeNone = () => () => {};
+/** Current search params, following any router. */
+function useSearch() {
+  const search = useSyncExternalStore(subscribeLocation, getSearch);
+  return new URLSearchParams(search);
+}
 const subscribeResize = (cb: () => void) => {
   window.addEventListener("resize", cb);
   return () => window.removeEventListener("resize", cb);
@@ -92,17 +98,11 @@ function describe(el: Element) {
 
 /* ============================================================ entry */
 
-export function DesignTweaks({ config = {} }: { config?: DesignTweaksConfig }) {
-  const params = useSearchParams();
-  const framed = params.get("design") === "frame";
-  const tweaks = useSyncExternalStore(store.subscribe, store.getTweaks, store.getServerTweaks);
-  const client = useSyncExternalStore(subscribeNone, () => true, () => false);
-  useEffect(() => {
-    setConfig(config);
-  }, [config]);
+export function App({ framed }: { framed: boolean }) {
+  const tweaks = useSyncExternalStore(store.subscribe, store.getTweaks);
   useEngine(tweaks, framed);
-  if (framed || !client) return null;
-  return createPortal(<DesignPanel tweaks={tweaks} />, document.body);
+  if (framed) return null;
+  return <DesignPanel tweaks={tweaks} />;
 }
 
 function useEngine(tweaks: Tweaks, framed: boolean) {
@@ -141,10 +141,9 @@ function useEngine(tweaks: Tweaks, framed: boolean) {
 type SvgEdit = { node: Text; loc: TextLocation; raw: string; left: number; top: number };
 
 function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
-  const status = useSyncExternalStore(store.subscribe, store.getStatus, store.getServerStatus);
+  const params = useSearch();
+  const pathname = window.location.pathname;
+  const status = useSyncExternalStore(store.subscribe, store.getStatus);
   const width = useSyncExternalStore(subscribeResize, () => window.innerWidth, () => 0);
 
   const [open, setOpenState] = useState(() => {
@@ -188,17 +187,17 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
       if (id === fallback) next.delete(key);
       else next.set(key, id);
       const query = next.toString();
-      router.replace(`${pathname}${query ? `?${query}` : ""}#${key}`, { scroll: false });
+      navigate(`${pathname}${query ? `?${query}` : ""}#${key}`);
       document.getElementById(key)?.scrollIntoView({ block: "start" });
       store.update((t) => ({ ...t, layout: { ...t.layout, [key]: id } }));
     },
-    [params, pathname, router],
+    [params, pathname],
   );
 
   // On load, an explicit search param wins; otherwise come back to the layout last picked here.
   const restored = useRef(false);
   useEffect(() => {
-    if (status !== "saved" || restored.current) return;
+    if ((status !== "saved" && status !== "local") || restored.current) return;
     restored.current = true;
     const t = store.getTweaks();
     const next = new URLSearchParams(params.toString());
@@ -213,8 +212,8 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
         changed = true;
       }
     }
-    if (changed) router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  }, [status, params, pathname, router]);
+    if (changed) navigate(`${pathname}?${next.toString()}`);
+  }, [status, params, pathname]);
 
   /* ---- text editing ---- */
 
@@ -335,7 +334,8 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
+      // Inside the panel's shadow root the event target is the host; the real one is first in the path.
+      const target = (e.composedPath()[0] ?? e.target) as HTMLElement;
       if (isEditing() || target.closest?.("input, textarea, select, [contenteditable]")) return;
       if (e.altKey && e.code === "KeyD") {
         e.preventDefault();
@@ -364,6 +364,16 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, mode, viewport, setOpen, select]);
 
+  useEffect(
+    () =>
+      pageStyle(`
+        html[data-design-outline] body *:not(dsgn-tweaks-root){outline:1px solid ${BLUE}55!important;outline-offset:-1px}
+        html[data-design-mode="text"] body *:not(dsgn-tweaks-root){cursor:text!important}
+        html[data-design-mode="inspect"] body *:not(dsgn-tweaks-root){cursor:crosshair!important}
+      `),
+    [],
+  );
+
   const count = store.changeCount(tweaks);
   const previewQuery = new URLSearchParams(params.toString());
   previewQuery.set("design", "frame");
@@ -371,18 +381,12 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
 
   return (
     <div data-design-ui className="font-sans text-[12px] text-[#e6e6e6] antialiased">
-      <style>{`
-        html[data-design-outline] :is(header, main, footer) *{outline:1px solid ${BLUE}55!important;outline-offset:-1px}
-        html[data-design-mode="text"] :is(header, main, footer) *{cursor:text!important}
-        html[data-design-mode="inspect"] :is(header, main, footer) *{cursor:crosshair!important}
-      `}</style>
-
       {/* hover + selection boxes */}
       <div
         ref={hoverBox}
         className="pointer-events-none fixed z-[2147483640] hidden rounded-[2px] border border-dashed border-[#0d99ff] bg-[#0d99ff]/[0.06] after:absolute after:-top-5 after:left-0 after:whitespace-nowrap after:rounded-[2px] after:bg-[#0d99ff] after:px-1.5 after:py-0.5 after:font-mono after:text-[10px] after:leading-none after:text-white after:content-[attr(data-label)]"
       />
-      {selected && (
+      {selected && !viewport && (
         <div ref={selBox} className="pointer-events-none fixed z-[2147483641] rounded-[2px] border-[1.5px] border-[#0d99ff]" />
       )}
 
@@ -395,7 +399,7 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
       {grid && <GridOverlay />}
 
       {viewport > 0 && (
-        <div className="fixed inset-0 z-[2147483630] flex flex-col items-center overflow-hidden bg-[#0b0b0b]/85 pt-6 backdrop-blur-sm">
+        <div className="pointer-events-auto fixed inset-0 z-[2147483630] flex flex-col items-center overflow-hidden bg-[#0b0b0b]/85 pt-6 backdrop-blur-sm">
           <p className="mb-3 font-mono text-[11px] text-white/60">
             {viewport}px{scale < 1 ? ` · shown at ${Math.round(scale * 100)}%` : ""} · edits sync live · Esc to close
           </p>
@@ -412,9 +416,14 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
 
       {svgEdit && (
         <input
-          autoFocus
-          defaultValue={norm(svgEdit.raw)}
-          onChange={(e) => {
+          ref={(el) => {
+            if (el && !el.dataset.ready) {
+              el.dataset.ready = "1";
+              el.value = norm(svgEdit.raw);
+              el.focus();
+            }
+          }}
+          onInput={(e) => {
             writeText(svgEdit.node, withValue(svgEdit.raw, e.currentTarget.value));
           }}
           onBlur={(e) => finishSvgEdit(e.currentTarget.value)}
@@ -423,7 +432,7 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
             if (e.key === "Escape") finishSvgEdit(null);
           }}
           style={{ left: svgEdit.left, top: svgEdit.top }}
-          className="fixed z-[2147483645] h-8 w-64 rounded-[4px] border border-[#0d99ff] bg-[#1e1e1e] px-2 text-[13px] text-white shadow-lg outline-none"
+          className="pointer-events-auto fixed z-[2147483645] h-8 w-64 rounded-[4px] border border-[#0d99ff] bg-[#1e1e1e] px-2 text-[13px] text-white shadow-lg outline-none"
         />
       )}
 
@@ -433,7 +442,7 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
           onClick={() => setOpen(true)}
           title="Design panel (⌥D)"
           className={cn(
-            "fixed bottom-4 z-[2147483646] flex h-9 items-center gap-2 rounded-full bg-[#1e1e1e] pl-3 pr-3.5 font-medium shadow-[0_8px_24px_#0005] ring-1 ring-white/10 hover:bg-[#2a2a2a]",
+            "pointer-events-auto fixed bottom-4 z-[2147483646] flex h-9 items-center gap-2 rounded-full bg-[#1e1e1e] pl-3 pr-3.5 font-medium shadow-[0_8px_24px_#0005] ring-1 ring-white/10 hover:bg-[#2a2a2a]",
             side === "right" ? "right-4" : "left-4",
           )}
         >
@@ -445,7 +454,7 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
         <aside
           aria-label="Design panel"
           className={cn(
-            "fixed bottom-3 top-3 z-[2147483646] flex w-[320px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[8px] bg-[#1e1e1e] shadow-[0_16px_48px_#0007] ring-1 ring-white/10",
+            "pointer-events-auto fixed bottom-3 top-3 z-[2147483646] flex w-[320px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[8px] bg-[#1e1e1e] shadow-[0_16px_48px_#0007] ring-1 ring-white/10",
             side === "right" ? "right-3" : "left-3",
           )}
         >
@@ -481,7 +490,11 @@ function DesignPanel({ tweaks }: { tweaks: Tweaks }) {
             <select
               aria-label="Preview width"
               value={viewport}
-              onChange={(e) => setViewport(Number(e.currentTarget.value))}
+              onChange={(e) => {
+                // The preview covers the page, so pointer modes would only target what's underneath.
+                setMode(null);
+                setViewport(Number(e.currentTarget.value));
+              }}
               className="ml-auto h-7 rounded-[4px] bg-white/5 px-1.5 text-[11px] text-white/80 outline-none hover:bg-white/10"
             >
               {VIEWPORTS.map((v) => (
@@ -814,7 +827,7 @@ function ThemeTab({ tweaks }: { tweaks: Tweaks }) {
           ))}
         </div>
         <p className="mt-3 text-[11px] leading-relaxed text-white/45">
-          Each theme keeps its own values. Hex with alpha works (#0a0a0a14). The isometric drawings keep their own palette.
+          Each theme keeps its own values. Hex with alpha works (#0a0a0a14).
         </p>
       </Group>
     </>
@@ -973,9 +986,9 @@ function Messages({ tweaks }: { tweaks: Tweaks }) {
       )}
       <textarea
         value={draft}
-        onChange={(e) => setDraft(e.currentTarget.value)}
+        onInput={(e) => setDraft(e.currentTarget.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
             e.preventDefault();
             queue(e.currentTarget.value);
           }
@@ -991,7 +1004,15 @@ function Messages({ tweaks }: { tweaks: Tweaks }) {
 
 /** What happened to the last batch: still with the agent, or its answer once it is in the code. */
 function AgentStatus({ tweaks }: { tweaks: Tweaks }) {
-  if (store.isPending(tweaks) && tweaks.sent)
+  // Browser-only mode has no agent on the other end: the batch was downloaded instead.
+  if (store.isLocal() && tweaks.sent && store.alreadySent(tweaks))
+    return (
+      <div className="flex items-center gap-2 border-b border-white/10 bg-[#0d99ff]/10 px-3 py-2.5 text-[11px] text-[#9fd3ff]">
+        <Check className="size-3.5 shrink-0" />
+        Downloaded {tweaks.sent.count} change{tweaks.sent.count === 1 ? "" : "s"} at {clock(tweaks.sent.at)} (also copied). Hand the file to {agent()}.
+      </div>
+    );
+  if (store.isPending(tweaks) && tweaks.sent && !store.isLocal())
     return (
       <div className="flex items-center gap-2 border-b border-white/10 bg-amber-300/10 px-3 py-2.5 text-[11px] text-amber-100">
         <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
@@ -1019,8 +1040,10 @@ function SendBar({ tweaks, status }: { tweaks: Tweaks; status: store.SaveStatus 
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const count = store.changeCount(tweaks);
-  const pending = store.isPending(tweaks);
-  const waiting = pending && store.alreadySent(tweaks);
+  const local = status === "local";
+  const pending = !local && store.isPending(tweaks);
+  const waiting = (pending || local) && store.alreadySent(tweaks);
+  const ready = status === "saved" || local;
 
   const send = () => {
     setBusy(true);
@@ -1041,13 +1064,15 @@ function SendBar({ tweaks, status }: { tweaks: Tweaks; status: store.SaveStatus 
           ? "Saving…"
           : status === "loading"
             ? "Loading…"
-            : "Changes show here only, until you send them";
+            : local
+              ? "No dev server: saved in this browser, Send downloads the batch"
+              : "Changes show here only, until you send them";
 
   return (
     <footer className="grid gap-2 border-t border-white/10 px-3 py-2.5">
       <button
         type="button"
-        disabled={!count || busy || waiting || status !== "saved"}
+        disabled={!count || busy || waiting || !ready}
         onClick={send}
         className="flex h-8 items-center justify-center gap-2 rounded-[4px] bg-[#0d99ff] text-[12px] font-semibold text-white transition-colors hover:bg-[#0a85e0] disabled:bg-white/10 disabled:text-white/35"
       >
@@ -1055,16 +1080,20 @@ function SendBar({ tweaks, status }: { tweaks: Tweaks; status: store.SaveStatus 
         {busy
           ? "Sending…"
           : waiting
-            ? `Sent, waiting for ${agent()}`
+            ? local
+              ? "Downloaded · change something to send again"
+              : `Sent, waiting for ${agent()}`
             : count
-              ? `${pending ? "Send again with new changes" : `Send ${count} change${count === 1 ? "" : "s"} to ${agent()}`}`
+              ? local
+                ? `Download ${count} change${count === 1 ? "" : "s"} for ${agent()}`
+                : `${pending ? "Send again with new changes" : `Send ${count} change${count === 1 ? "" : "s"} to ${agent()}`}`
               : "Nothing to send yet"}
       </button>
       <p className="flex items-center gap-2 text-[11px] text-white/50">
         <span
           className={cn(
             "size-1.5 shrink-0 rounded-full",
-            failed || status === "error" ? "bg-red-400" : pending || status !== "saved" ? "bg-amber-300" : "bg-emerald-400",
+            failed || status === "error" ? "bg-red-400" : local ? "bg-sky-400" : pending || status !== "saved" ? "bg-amber-300" : "bg-emerald-400",
           )}
         />
         {line}
@@ -1126,7 +1155,7 @@ function TextField({ label, prop, value, computed, onSet, wide, list }: FieldPro
         value={draft ?? value ?? ""}
         placeholder={computed}
         list={list}
-        onChange={(e) => setDraft(e.currentTarget.value)}
+        onInput={(e) => setDraft(e.currentTarget.value)}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") commit();
@@ -1184,7 +1213,7 @@ function ColorField(props: FieldProps) {
     <div className={cn("flex items-end gap-1.5", props.wide && "col-span-2")}>
       <label className="relative mb-0 size-7 shrink-0 cursor-pointer overflow-hidden rounded-[4px] ring-1 ring-white/15" style={{ background: value ?? computed }}>
         <span className="sr-only">Pick {props.label}</span>
-        <input type="color" value={toHex(resolved)} onChange={(e) => onSet(prop, e.currentTarget.value)} className="absolute inset-0 cursor-pointer opacity-0" />
+        <input type="color" value={toHex(resolved)} onInput={(e) => onSet(prop, e.currentTarget.value)} className="absolute inset-0 cursor-pointer opacity-0" />
       </label>
       <div className="min-w-0 flex-1">
         <TextField {...props} wide={false} list="design-token-colors" />
