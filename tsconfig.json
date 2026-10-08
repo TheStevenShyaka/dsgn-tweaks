@@ -5,11 +5,14 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "types": ["node"],
+    "paths": { "dsgn-tweaks": ["./src/index.ts"] }
   },
-  "include": ["src"]
+  "include": ["src", "tsup.config.ts"]
 }

@@ -1,7 +1,7 @@
 {
   "name": "dsgn-tweaks",
-  "version": "0.1.0",
-  "description": "A dev-only design panel for Next.js + Tailwind v4 pages: edit text, inspect and restyle elements, swap layouts and tokens live, then send the batch to your coding agent to implement.",
+  "version": "0.2.0",
+  "description": "A dev-only design panel for any website: edit text, inspect and restyle elements, swap layouts and colour tokens live, then send the batch to your coding agent to implement. Plain HTML, Vite, React, Next.js and more.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -10,33 +10,74 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts",
-    "./server": "./src/server.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
+    },
+    "./global": "./dist/dsgn-tweaks.global.js"
   },
+  "bin": {
+    "dsgn-tweaks": "./dist/cli.js"
+  },
+  "jsdelivr": "./dist/dsgn-tweaks.global.js",
+  "unpkg": "./dist/dsgn-tweaks.global.js",
   "files": [
-    "src",
+    "dist",
     "README.md",
     "AGENTS.md",
     "LICENSE"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "example": "pnpm --filter dsgn-tweaks-example dev"
+    "build:css": "tailwindcss -i src/panel/panel.css -o src/panel/panel.generated.css --minify",
+    "build": "pnpm build:css && tsup",
+    "typecheck": "pnpm build:css && tsc --noEmit",
+    "example:html": "pnpm --filter dsgn-tweaks-example-html dev",
+    "example:vite": "pnpm --filter dsgn-tweaks-example-vite dev",
+    "example:next": "pnpm --filter dsgn-tweaks-example-next dev"
   },
   "peerDependencies": {
-    "lucide-react": ">=0.460.0",
     "next": ">=15",
-    "react": ">=19",
-    "react-dom": ">=19"
+    "react": ">=18",
+    "vite": ">=5"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
     "@types/node": "^20",
     "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "lucide-react": "^1.22.0",
+    "lucide-preact": "^1.52.0",
     "next": "16.2.9",
+    "preact": "^11.0.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "typescript": "^5"
+    "tailwindcss": "^4.3.3",
+    "tsup": "^8.5.1",
+    "typescript": "^5",
+    "vite": "^8.3.3"
   }
 }

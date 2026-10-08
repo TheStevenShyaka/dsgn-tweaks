@@ -4,3 +4,4 @@ node_modules/
 .design/
 .next/
 next-env.d.ts
+src/panel/panel.generated.css
