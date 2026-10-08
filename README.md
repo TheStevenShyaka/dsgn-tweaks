@@ -20,7 +20,7 @@ Next.js 15+ (App Router), React 19, Tailwind CSS v4 and `lucide-react`.
 ## Install
 
 ```bash
-npm i -D github:TheStevenShyaka/design-tweaks
+pnpm add -D github:TheStevenShyaka/design-tweaks
 ```
 
 ### 1. Next config
@@ -127,9 +127,9 @@ const config: DesignTweaksConfig = {
 ## Working on the panel
 
 ```bash
-npm install
-npm run example   # http://localhost:3100, a small page wired to the local source
-npm run typecheck
+pnpm install
+pnpm example     # http://localhost:3100, a small page wired to the local source
+pnpm typecheck
 ```
 
 Source is in `src/`:
