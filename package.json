@@ -2,6 +2,11 @@
   "name": "dsgn-tweaks",
   "version": "0.1.0",
   "description": "A dev-only design panel for Next.js + Tailwind v4 pages: edit text, inspect and restyle elements, swap layouts and tokens live, then send the batch to your coding agent to implement.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheStevenShyaka/dsgn-tweaks.git"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -11,7 +16,8 @@
   "files": [
     "src",
     "README.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    "LICENSE"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
