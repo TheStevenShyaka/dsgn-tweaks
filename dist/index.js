@@ -343,7 +343,10 @@ function endpoint(extra = "") {
   return `${getConfig().endpoint ?? DEFAULT_ENDPOINT}${query ? `?${query}` : ""}`;
 }
 var state = EMPTY;
+var inbox = { pending: 0, reply: null };
 var status = "loading";
+var sentAt = 0;
+var inboxFresh = true;
 var local = false;
 var listeners = /* @__PURE__ */ new Set();
 var channel = null;
@@ -361,6 +364,7 @@ function subscribe(listener) {
   };
 }
 var getTweaks = () => state;
+var getInbox = () => inbox;
 var getStatus = () => status;
 var isLocal = () => local;
 function normalise(raw) {
@@ -376,7 +380,9 @@ function normalise(raw) {
     tokens: { light: { ...t3.tokens?.light }, dark: { ...t3.tokens?.dark } },
     text: Array.isArray(t3.text) ? t3.text : [],
     styles: Array.isArray(t3.styles) ? t3.styles : [],
-    messages: Array.isArray(t3.messages) ? t3.messages : legacy
+    messages: Array.isArray(t3.messages) ? t3.messages : legacy,
+    // Batches from before ids were tracked can't be cleaned up: forget them.
+    sent: t3.sent && Array.isArray(t3.sent.ids?.text) ? t3.sent : void 0
   };
 }
 function readLocal() {
@@ -409,19 +415,24 @@ function start(writer) {
     };
   }
   if (getConfig().storage === "browser") return goLocal();
-  const pull = (first) => fetch(endpoint(), { cache: "no-store" }).then((r3) => r3.ok ? r3.json() : Promise.reject(r3.status)).then((data) => {
-    if (!first && (status === "saving" || !(String(data?.updatedAt ?? "") > synced))) return;
-    state = normalise(data);
-    synced = state.updatedAt;
-    status = "saved";
-    emit();
-  }).catch(() => {
-    if (!first) return;
-    if (getConfig().storage === "server") {
-      status = writer ? "error" : "saved";
+  const pull = (first) => {
+    const startedAt = Date.now();
+    return fetch(endpoint(), { cache: "no-store" }).then((r3) => r3.ok ? r3.json() : Promise.reject(r3.status)).then(({ _inbox, ...data }) => {
+      if (_inbox) readInbox(_inbox, startedAt > sentAt);
+      if (!first && (status === "saving" || !(String(data?.updatedAt ?? "") > synced))) return;
+      state = normalise(data);
+      synced = state.updatedAt;
+      status = "saved";
       emit();
-    } else goLocal();
-  });
+      settle();
+    }).catch(() => {
+      if (!first) return;
+      if (getConfig().storage === "server") {
+        status = writer ? "error" : "saved";
+        emit();
+      } else goLocal();
+    });
+  };
   pull(true).then(() => {
     if (!writer || local) return;
     poll = setInterval(() => document.visibilityState === "visible" && pull(false), POLL_MS);
@@ -472,10 +483,65 @@ function download(snapshot) {
   navigator.clipboard?.writeText(json).catch(() => {
   });
 }
+function readInbox(raw, fresh) {
+  const next = { pending: Number(raw.pending) || 0, reply: raw.reply?.at ? raw.reply : null };
+  if (next.pending !== inbox.pending || next.reply?.at !== inbox.reply?.at) {
+    inbox = next;
+    emit();
+  }
+  if (fresh) {
+    inboxFresh = true;
+    settle();
+  }
+}
+function settle() {
+  const batch = state.sent;
+  if (local || !batch || batch.done || !inboxFresh || inbox.pending > 0) return;
+  const same = (a3, b3) => JSON.stringify(a3) === JSON.stringify(b3);
+  update((t3) => {
+    const tokens = { light: { ...t3.tokens.light }, dark: { ...t3.tokens.dark } };
+    for (const theme of ["light", "dark"])
+      for (const [k3, v3] of Object.entries(batch.tokens[theme])) if (tokens[theme][k3] === v3) delete tokens[theme][k3];
+    return {
+      ...t3,
+      text: t3.text.filter((e3) => !batch.ids.text.includes(e3.id)),
+      styles: t3.styles.filter((e3) => !batch.ids.styles.includes(e3.id)),
+      tokens,
+      sections: same(t3.sections, batch.sections) ? { order: [], hidden: [] } : t3.sections,
+      sent: { ...batch, done: true }
+    };
+  });
+}
+var isSent = (t3, kind, id) => !!t3.sent && !t3.sent.done && t3.sent.ids[kind].includes(id);
+function unsent(t3) {
+  const open = t3.sent && !t3.sent.done ? t3.sent : null;
+  const tokensChanged = (theme) => Object.fromEntries(Object.entries(t3.tokens[theme]).filter(([k3, v3]) => open?.tokens[theme][k3] !== v3));
+  const sectionsChanged = !open || JSON.stringify(open.sections) !== JSON.stringify(t3.sections);
+  return {
+    text: t3.text.filter((e3) => !open?.ids.text.includes(e3.id)),
+    styles: t3.styles.filter((e3) => !open?.ids.styles.includes(e3.id)),
+    messages: t3.messages,
+    tokens: { light: tokensChanged("light"), dark: tokensChanged("dark") },
+    sections: sectionsChanged ? t3.sections : { order: [], hidden: [] }
+  };
+}
+var unsentCount = (t3) => changeCount({ ...t3, ...unsent(t3) });
 async function send() {
   const at = (/* @__PURE__ */ new Date()).toISOString();
-  const sent = { at, count: changeCount(state), fingerprint: fingerprint(state) };
-  const snapshot = { ...state, sent };
+  const part = unsent(state);
+  const previous = state.sent && !state.sent.done ? state.sent.ids : { text: [], styles: [], messages: [] };
+  const batch = {
+    at,
+    count: changeCount({ ...state, ...part }),
+    ids: {
+      text: [...previous.text, ...part.text.map((e3) => e3.id)],
+      styles: [...previous.styles, ...part.styles.map((e3) => e3.id)],
+      messages: part.messages.map((m3) => m3.id)
+    },
+    tokens: state.tokens,
+    sections: state.sections
+  };
+  const snapshot = { ...state, ...part, sent: batch };
   if (local) download(snapshot);
   else {
     const r3 = await fetch(endpoint("send=1"), {
@@ -484,12 +550,12 @@ async function send() {
       body: JSON.stringify(snapshot, null, 2)
     });
     if (!r3.ok) throw new Error(`Send failed (${r3.status})`);
+    sentAt = Date.now();
+    inboxFresh = false;
+    inbox = { ...inbox, pending: inbox.pending + 1 };
   }
-  update((t3) => ({ ...t3, sent }));
+  update((t3) => ({ ...t3, messages: t3.messages.filter((m3) => !batch.ids.messages.includes(m3.id)), sent: batch }));
 }
-var fingerprint = (t3) => JSON.stringify([t3.text, t3.styles, t3.tokens, t3.sections, t3.messages.map((m3) => m3.text)]);
-var alreadySent = (t3) => !!t3.sent?.fingerprint && t3.sent.fingerprint === fingerprint(t3);
-var isPending = (t3) => !!t3.sent && (!t3.reply || t3.reply.at < t3.sent.at);
 function changeCount(t3) {
   return t3.messages.length + t3.text.length + t3.styles.reduce((n2, s3) => n2 + Object.keys(s3.props).length, 0) + Object.keys(t3.tokens.light).length + Object.keys(t3.tokens.dark).length + t3.sections.hidden.length + (t3.sections.order.length ? 1 : 0);
 }
@@ -1873,7 +1939,7 @@ function DesignPanel({ tweaks }) {
       `),
     []
   );
-  const count = changeCount(tweaks);
+  const count = unsentCount(tweaks);
   const previewQuery = new URLSearchParams(params.toString());
   previewQuery.set("design", "frame");
   const scale = viewport ? Math.min(1, (width - 48) / viewport) : 1;
@@ -2239,7 +2305,7 @@ function ChangesTab({ tweaks }) {
     tweaks.text.length > 0 && /* @__PURE__ */ u3(Group, { title: `Text \xB7 ${tweaks.text.length}`, children: /* @__PURE__ */ u3("ul", { className: "grid gap-1", children: tweaks.text.map((e3) => /* @__PURE__ */ u3(
       Change,
       {
-        meta: `${sectionLabel(e3.scope)} \xB7 ${e3.tag}${e3.layout ? ` \xB7 ${e3.layout.split(":")[1]}` : ""}`,
+        meta: `${sectionLabel(e3.scope)} \xB7 ${e3.tag}${e3.layout ? ` \xB7 ${e3.layout.split(":")[1]}` : ""}${isSent(tweaks, "text", e3.id) ? ` \xB7 with ${agent()}` : ""}`,
         onRevert: () => update((t3) => ({ ...t3, text: t3.text.filter((x4) => x4.id !== e3.id) })),
         children: [
           /* @__PURE__ */ u3("span", { className: "text-white/40 line-through", children: e3.original }),
@@ -2251,7 +2317,7 @@ function ChangesTab({ tweaks }) {
     tweaks.styles.length > 0 && /* @__PURE__ */ u3(Group, { title: `Styles \xB7 ${tweaks.styles.length}`, children: /* @__PURE__ */ u3("ul", { className: "grid gap-1", children: tweaks.styles.map((e3) => /* @__PURE__ */ u3(
       Change,
       {
-        meta: `${sectionLabel(e3.scope)} \xB7 at ${e3.viewport}px${e3.layout ? ` \xB7 ${e3.layout.split(":")[1]}` : ""}`,
+        meta: `${sectionLabel(e3.scope)} \xB7 at ${e3.viewport}px${e3.layout ? ` \xB7 ${e3.layout.split(":")[1]}` : ""}${isSent(tweaks, "styles", e3.id) ? ` \xB7 with ${agent()}` : ""}`,
         onRevert: () => update((t3) => ({ ...t3, styles: t3.styles.filter((x4) => x4.id !== e3.id) })),
         children: [
           /* @__PURE__ */ u3("span", { className: "text-white", children: e3.label }),
@@ -2313,7 +2379,7 @@ function ChangesTab({ tweaks }) {
           disabled: empty,
           onClick: () => {
             if (window.confirm("Discard every design change and message?"))
-              update((t3) => ({ ...EMPTY, layout: t3.layout, sent: t3.sent, reply: t3.reply }));
+              update((t3) => ({ ...EMPTY, layout: t3.layout, sent: t3.sent, dismissedReply: t3.dismissedReply }));
           },
           className: "ml-auto flex h-7 items-center gap-1.5 rounded-[4px] px-2.5 text-red-300/80 hover:bg-red-400/10 disabled:opacity-30",
           children: [
@@ -2359,72 +2425,70 @@ function Messages({ tweaks }) {
   ] });
 }
 function AgentStatus({ tweaks }) {
-  if (isLocal() && tweaks.sent && alreadySent(tweaks))
+  const inbox2 = Z(subscribe, getInbox);
+  const batch = tweaks.sent;
+  if (isLocal()) {
+    if (!batch || unsentCount(tweaks) > 0) return null;
     return /* @__PURE__ */ u3("div", { className: "flex items-center gap-2 border-b border-white/10 bg-[#0d99ff]/10 px-3 py-2.5 text-[11px] text-[#9fd3ff]", children: [
       /* @__PURE__ */ u3(Check, { className: "size-3.5 shrink-0" }),
       "Downloaded ",
-      tweaks.sent.count,
+      batch.count,
       " change",
-      tweaks.sent.count === 1 ? "" : "s",
+      batch.count === 1 ? "" : "s",
       " at ",
-      clock(tweaks.sent.at),
+      clock(batch.at),
       " (also copied). Hand the file to ",
       agent(),
       "."
     ] });
-  if (isPending(tweaks) && tweaks.sent && !isLocal())
+  }
+  if (inbox2.pending > 0)
     return /* @__PURE__ */ u3("div", { className: "flex items-center gap-2 border-b border-white/10 bg-amber-300/10 px-3 py-2.5 text-[11px] text-amber-100", children: [
       /* @__PURE__ */ u3(LoaderCircle, { className: "size-3.5 shrink-0 animate-spin" }),
-      "Sent ",
-      tweaks.sent.count,
-      " change",
-      tweaks.sent.count === 1 ? "" : "s",
-      " at ",
-      clock(tweaks.sent.at),
-      ". ",
-      agent(),
-      " is implementing them."
+      batch && !batch.done ? `Sent ${batch.count} change${batch.count === 1 ? "" : "s"} at ${clock(batch.at)} as one batch. ${agent()} is implementing them.` : `A batch is waiting for ${agent()}.`
     ] });
-  if (!tweaks.reply) return null;
+  const reply = inbox2.reply;
+  if (!reply || reply.at === tweaks.dismissedReply) return null;
   return /* @__PURE__ */ u3("div", { className: "flex items-start gap-2 border-b border-white/10 bg-emerald-400/10 px-3 py-2.5 text-[11px] text-emerald-50", children: [
     /* @__PURE__ */ u3(Check, { className: "mt-0.5 size-3.5 shrink-0 text-emerald-300" }),
     /* @__PURE__ */ u3("p", { className: "min-w-0 flex-1 whitespace-pre-wrap leading-relaxed", children: [
       /* @__PURE__ */ u3("span", { className: "text-emerald-300", children: [
         agent(),
         " \xB7 ",
-        clock(tweaks.reply.at)
+        clock(reply.at)
       ] }),
       "\n",
-      tweaks.reply.text
+      reply.text
     ] }),
-    /* @__PURE__ */ u3(IconButton, { label: "Dismiss", onClick: () => update((t3) => ({ ...t3, reply: void 0 })), children: /* @__PURE__ */ u3(X2, {}) })
+    /* @__PURE__ */ u3(IconButton, { label: "Dismiss", onClick: () => update((t3) => ({ ...t3, dismissedReply: reply.at })), children: /* @__PURE__ */ u3(X2, {}) })
   ] });
 }
 function SendBar({ tweaks, status: status2 }) {
+  const inbox2 = Z(subscribe, getInbox);
   const [busy, setBusy] = d2(false);
   const [failed, setFailed] = d2(false);
-  const count = changeCount(tweaks);
+  const count = unsentCount(tweaks);
   const local2 = status2 === "local";
-  const pending = !local2 && isPending(tweaks);
-  const waiting = (pending || local2) && alreadySent(tweaks);
+  const pending = !local2 && inbox2.pending > 0;
   const ready = status2 === "saved" || local2;
+  const plural = (n2) => `${n2} change${n2 === 1 ? "" : "s"}`;
   const send2 = () => {
     setBusy(true);
     setFailed(false);
     send().catch(() => setFailed(true)).finally(() => setBusy(false));
   };
-  const line = failed ? "Couldn't send. Is the dev server running?" : status2 === "error" ? "Can't save. Is the dev server running?" : pending && tweaks.sent ? `Sent at ${clock(tweaks.sent.at)} \xB7 ${agent()} is on it` : status2 === "saving" ? "Saving\u2026" : status2 === "loading" ? "Loading\u2026" : local2 ? "No dev server: saved in this browser, Send downloads the batch" : "Changes show here only, until you send them";
+  const line = failed ? "Couldn't send. Is the dev server running?" : status2 === "error" ? "Can't save. Is the dev server running?" : pending ? count ? `${agent()} is on the last batch \xB7 ${plural(count)} queued for the next Send` : `${agent()} is implementing the batch you sent` : status2 === "saving" ? "Saving\u2026" : status2 === "loading" ? "Loading\u2026" : local2 ? "No dev server: saved in this browser, Send downloads the batch" : "Changes queue here and only change what you see, until you Send";
   return /* @__PURE__ */ u3("footer", { className: "grid gap-2 border-t border-white/10 px-3 py-2.5", children: [
     /* @__PURE__ */ u3(
       "button",
       {
         type: "button",
-        disabled: !count || busy || waiting || !ready,
+        disabled: !count || busy || pending || !ready,
         onClick: send2,
         className: "flex h-8 items-center justify-center gap-2 rounded-[4px] bg-[#0d99ff] text-[12px] font-semibold text-white transition-colors hover:bg-[#0a85e0] disabled:bg-white/10 disabled:text-white/35",
         children: [
-          busy ? /* @__PURE__ */ u3(LoaderCircle, { className: "size-3.5 animate-spin" }) : /* @__PURE__ */ u3(Send, { className: "size-3.5" }),
-          busy ? "Sending\u2026" : waiting ? local2 ? "Downloaded \xB7 change something to send again" : `Sent, waiting for ${agent()}` : count ? local2 ? `Download ${count} change${count === 1 ? "" : "s"} for ${agent()}` : `${pending ? "Send again with new changes" : `Send ${count} change${count === 1 ? "" : "s"} to ${agent()}`}` : "Nothing to send yet"
+          busy || pending ? /* @__PURE__ */ u3(LoaderCircle, { className: "size-3.5 animate-spin" }) : /* @__PURE__ */ u3(Send, { className: "size-3.5" }),
+          busy ? "Sending\u2026" : pending ? `With ${agent()} \xB7 Send opens when it's done` : count ? local2 ? `Download ${plural(count)} for ${agent()}` : `Send ${plural(count)} to ${agent()}` : local2 && tweaks.sent ? "Downloaded \xB7 change something to send again" : "Nothing queued"
         ]
       }
     ),

@@ -108,17 +108,25 @@ type Tweaks = {
     styles: StyleEdit[];
     /** Queued notes for Claude: anything the panel can't express. */
     messages: Message[];
-    /** Set when the batch is sent to Claude; `reply` is Claude's answer once it is implemented. */
-    sent?: {
-        at: string;
-        count: number;
-        fingerprint?: string;
-    };
-    reply?: {
-        at: string;
-        text: string;
-    };
+    /** The last batch handed to the agent. Its edits stay applied (marked as sent) until the agent finishes it. */
+    sent?: SentBatch;
+    /** `at` of the agent reply the person closed. */
+    dismissedReply?: string;
     updatedAt: string;
+};
+type SentBatch = {
+    at: string;
+    count: number;
+    /** What went in the batch, so the panel can mark it and clean it up once implemented. */
+    ids: {
+        text: string[];
+        styles: string[];
+        messages: string[];
+    };
+    tokens: Tweaks["tokens"];
+    sections: Tweaks["sections"];
+    /** The agent finished it and the panel removed its edits. */
+    done?: boolean;
 };
 
 type DsgnTweaks = {

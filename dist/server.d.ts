@@ -7,8 +7,10 @@ import { IncomingMessage, ServerResponse } from 'node:http';
  *   createDesignRoute()           { GET, PUT, POST } for Next.js route handlers
  *   createNodeMiddleware()        (req, res, next) for Vite, Express, Connect and the CLI
  *
- * GET/PUT read and write .design/tweaks.json (the live, visual-only state).
+ * GET/PUT read and write .design/tweaks.json (the live, visual-only state). GET also reports the
+ * hand-off: how many sent batches still wait in .design/outbox/, and the agent's .design/reply.json.
  * POST is Send: it drops a snapshot in .design/outbox/<timestamp>.json for the agent to implement.
+ * The agent finishes a batch by moving it out of the outbox (to .design/done/) and writing reply.json.
  * The Node middleware also serves the script-tag build at <base>/client.js.
  */
 declare const DEFAULT_BASE = "/api/dsgn-tweaks";

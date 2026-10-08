@@ -8,7 +8,7 @@ import net from "net";
 import path2 from "path";
 
 // src/server/index.ts
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 var DEFAULT_BASE = "/api/dsgn-tweaks";
@@ -20,22 +20,34 @@ function store({ dir: dir2 = ".design" }) {
     return file && /^[a-z0-9-]{1,40}$/.test(file) ? file : null;
   };
   const tweaksFile = (params) => path.join(root, name(params) ? `tweaks.${name(params)}.json` : "tweaks.json");
+  const outbox = (params) => path.join(root, name(params) ? `outbox-${name(params)}` : "outbox");
+  const replyFile = (params) => path.join(root, name(params) ? `reply.${name(params)}.json` : "reply.json");
+  const readJson = async (file) => {
+    try {
+      return parse(await readFile(file, "utf8"));
+    } catch {
+      return null;
+    }
+  };
   return {
     async read(params) {
+      const tweaks = await readJson(tweaksFile(params)) ?? {};
+      let pending = 0;
       try {
-        return await readFile(tweaksFile(params), "utf8");
+        pending = (await readdir(outbox(params))).filter((f) => f.endsWith(".json")).length;
       } catch {
-        return "{}";
       }
+      return JSON.stringify({ ...tweaks, _inbox: { pending, reply: await readJson(replyFile(params)) } });
     },
     async write(params, data) {
+      const { _inbox: _ignored, reply: _old, ...rest } = data;
       await mkdir(root, { recursive: true });
-      await writeFile(tweaksFile(params), `${JSON.stringify(data, null, 2)}
+      await writeFile(tweaksFile(params), `${JSON.stringify(rest, null, 2)}
 `);
     },
     /** One file per send, so a second send while the agent is still working never overwrites the first. */
     async send(params, data) {
-      const box = path.join(root, name(params) ? `outbox-${name(params)}` : "outbox");
+      const box = outbox(params);
       await mkdir(box, { recursive: true });
       await writeFile(path.join(box, `${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`), `${JSON.stringify(data, null, 2)}
 `);
