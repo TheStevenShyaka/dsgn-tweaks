@@ -1,6 +1,6 @@
 "use client";
 
-import { getConfig, themeAttribute } from "./config";
+import { getConfig, isDarkTheme, themeSelectors, writeTheme } from "./config";
 import type { Step, StyleEdit, TextEdit, Tweaks } from "./store";
 
 /**
@@ -366,14 +366,14 @@ function applyTokens(tokens: Tweaks["tokens"]) {
       });
     return decls.length ? `${selector}{${decls.join("")}}` : "";
   };
-  let el = document.getElementById("design-tokens");
+  let el = document.getElementById("dsgn-tweaks-tokens");
   if (!el) {
     el = document.createElement("style");
-    el.id = "design-tokens";
+    el.id = "dsgn-tweaks-tokens";
     document.head.appendChild(el);
   }
-  const attr = themeAttribute();
-  el.textContent = block(`:root:not([${attr}="dark"])`, tokens.light) + block(`:root[${attr}="dark"]`, tokens.dark);
+  const { light, dark } = themeSelectors();
+  el.textContent = block(light, tokens.light) + block(dark, tokens.dark);
 }
 
 export function applyAll(t: Tweaks) {
@@ -390,15 +390,17 @@ export function writeText(node: Text, raw: string) {
   node.data = raw;
 }
 
-export const isDark = () => document.documentElement.getAttribute(themeAttribute()) === "dark";
+export const isDark = isDarkTheme;
+export const setTheme = writeTheme;
 
-export function setTheme(next: "light" | "dark") {
-  document.documentElement.setAttribute(themeAttribute(), next);
-  const key = getConfig().theme?.storageKey;
-  if (!key) return;
-  try {
-    localStorage.setItem(key, next);
-  } catch {
-    // Storage blocked: the switch still works for this visit.
+/** Page-level CSS the panel needs (outline mode, pointer cursors). It lives outside the panel's shadow root. */
+export function pageStyle(css: string) {
+  let el = document.getElementById("dsgn-tweaks-page");
+  if (!el) {
+    el = document.createElement("style");
+    el.id = "dsgn-tweaks-page";
+    document.head.appendChild(el);
   }
+  el.textContent = css;
+  return () => el.remove();
 }

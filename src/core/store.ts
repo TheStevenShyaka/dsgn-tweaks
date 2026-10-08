@@ -58,7 +58,7 @@ export type Tweaks = {
 
 export const EMPTY: Tweaks = {
   readme:
-    "Written by the dev-only Design panel. Nothing here touches the source until Send: Claude then implements the sent batch in code and Figma and removes it from this file.",
+    "Written by dsgn-tweaks. Nothing here touches the source until Send: the agent then implements the sent batch and removes it from this file. See AGENTS.md in the dsgn-tweaks repo.",
   layout: {},
   sections: { order: [], hidden: [] },
   tokens: { light: {}, dark: {} },
@@ -68,22 +68,28 @@ export const EMPTY: Tweaks = {
   updatedAt: "",
 };
 
-export type SaveStatus = "loading" | "saved" | "saving" | "error";
+/** "local" means no dev server answered: tweaks live in this browser and Send downloads the batch. */
+export type SaveStatus = "loading" | "saved" | "saving" | "error" | "local";
 
 const CHANNEL = "dsgn-tweaks";
+const LOCAL_KEY = "dsgn-tweaks:state";
 const POLL_MS = 2000;
+export const DEFAULT_ENDPOINT = "/api/dsgn-tweaks";
 
 /** ?designfile=name keeps a separate working file (used by automated checks). */
-function endpoint() {
+function endpoint(extra = "") {
   const file = new URLSearchParams(window.location.search).get("designfile");
-  return `${getConfig().endpoint ?? "/api/design"}${file ? `?file=${encodeURIComponent(file)}` : ""}`;
+  const query = [file ? `file=${encodeURIComponent(file)}` : "", extra].filter(Boolean).join("&");
+  return `${getConfig().endpoint ?? DEFAULT_ENDPOINT}${query ? `?${query}` : ""}`;
 }
 
 let state: Tweaks = EMPTY;
 let status: SaveStatus = "loading";
+let local = false;
 const listeners = new Set<() => void>();
 let channel: BroadcastChannel | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
+let poll: ReturnType<typeof setInterval> | undefined;
 let started = false;
 /** updatedAt of the version this window last loaded or saved; anything else on disk came from elsewhere. */
 let synced = "";
@@ -94,13 +100,14 @@ function emit() {
 
 export function subscribe(listener: () => void) {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export const getTweaks = () => state;
-export const getServerTweaks = () => EMPTY;
 export const getStatus = () => status;
-export const getServerStatus = (): SaveStatus => "loading";
+export const isLocal = () => local;
 
 function normalise(raw: unknown): Tweaks {
   const t = (raw && typeof raw === "object" ? raw : {}) as Partial<Tweaks> & { notes?: string };
@@ -120,6 +127,30 @@ function normalise(raw: unknown): Tweaks {
   };
 }
 
+function readLocal() {
+  try {
+    return normalise(JSON.parse(localStorage.getItem(LOCAL_KEY) ?? "{}"));
+  } catch {
+    return normalise({});
+  }
+}
+
+function writeLocal() {
+  try {
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(state));
+  } catch {
+    // Storage blocked: changes still apply for this visit.
+  }
+}
+
+/** Without a dev server (a plain HTML page, say), everything lives in this browser. */
+function goLocal() {
+  local = true;
+  state = readLocal();
+  status = "local";
+  emit();
+}
+
 /** Loads the saved tweaks once. `writer` is false inside the preview iframe, which only listens. */
 export function start(writer: boolean) {
   if (started) return;
@@ -131,6 +162,8 @@ export function start(writer: boolean) {
       emit();
     };
   }
+  if (getConfig().storage === "browser") return goLocal();
+
   const pull = (first: boolean) =>
     fetch(endpoint(), { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
@@ -145,17 +178,29 @@ export function start(writer: boolean) {
       })
       .catch(() => {
         if (!first) return;
-        status = writer ? "error" : "saved";
-        emit();
+        if (getConfig().storage === "server") {
+          status = writer ? "error" : "saved";
+          emit();
+        } else goLocal();
       });
-  pull(true);
-  // Pick up the file changing on disk: another tab, or Claude clearing it after applying the changes.
-  if (!writer) return;
-  setInterval(() => document.visibilityState === "visible" && pull(false), POLL_MS);
-  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && pull(false));
+  pull(true).then(() => {
+    // Pick up the file changing on disk: another tab, or the agent clearing it after implementing a batch.
+    if (!writer || local) return;
+    poll = setInterval(() => document.visibilityState === "visible" && pull(false), POLL_MS);
+    document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && pull(false));
+  });
+}
+
+export function stop() {
+  clearInterval(poll);
+  clearTimeout(timer);
+  channel?.close();
+  channel = null;
+  started = false;
 }
 
 function save() {
+  if (local) return writeLocal();
   status = "saving";
   emit();
   clearTimeout(timer);
@@ -185,17 +230,31 @@ export function update(fn: (t: Tweaks) => Tweaks) {
   save();
 }
 
-/** Hands the whole batch to Claude: the dev server drops a snapshot in .design/outbox/, which Claude watches. */
+/** Without a server, Send downloads the batch (and copies it) so it can be handed to an agent by hand. */
+function download(snapshot: Tweaks) {
+  const json = JSON.stringify(snapshot, null, 2);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+  a.download = `dsgn-tweaks-${snapshot.sent?.at.replace(/[:.]/g, "-")}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  navigator.clipboard?.writeText(json).catch(() => {});
+}
+
+/** Hands the whole batch to the agent: the dev server drops a snapshot in .design/outbox/, which the agent watches. */
 export async function send() {
   const at = new Date().toISOString();
   const sent = { at, count: changeCount(state), fingerprint: fingerprint(state) };
   const snapshot = { ...state, sent };
-  const r = await fetch(`${endpoint()}${endpoint().includes("?") ? "&" : "?"}send=1`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(snapshot, null, 2),
-  });
-  if (!r.ok) throw new Error(`Send failed (${r.status})`);
+  if (local) download(snapshot);
+  else {
+    const r = await fetch(endpoint("send=1"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(snapshot, null, 2),
+    });
+    if (!r.ok) throw new Error(`Send failed (${r.status})`);
+  }
   update((t) => ({ ...t, sent }));
 }
 
