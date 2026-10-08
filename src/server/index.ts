@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +10,10 @@ import { fileURLToPath } from "node:url";
  *   createDesignRoute()           { GET, PUT, POST } for Next.js route handlers
  *   createNodeMiddleware()        (req, res, next) for Vite, Express, Connect and the CLI
  *
- * GET/PUT read and write .design/tweaks.json (the live, visual-only state).
+ * GET/PUT read and write .design/tweaks.json (the live, visual-only state). GET also reports the
+ * hand-off: how many sent batches still wait in .design/outbox/, and the agent's .design/reply.json.
  * POST is Send: it drops a snapshot in .design/outbox/<timestamp>.json for the agent to implement.
+ * The agent finishes a batch by moving it out of the outbox (to .design/done/) and writing reply.json.
  * The Node middleware also serves the script-tag build at <base>/client.js.
  */
 
@@ -34,21 +36,35 @@ function store({ dir = ".design" }: ServerOptions) {
     return file && /^[a-z0-9-]{1,40}$/.test(file) ? file : null;
   };
   const tweaksFile = (params: URLSearchParams) => path.join(root, name(params) ? `tweaks.${name(params)}.json` : "tweaks.json");
+  const outbox = (params: URLSearchParams) => path.join(root, name(params) ? `outbox-${name(params)}` : "outbox");
+  const replyFile = (params: URLSearchParams) => path.join(root, name(params) ? `reply.${name(params)}.json` : "reply.json");
+  const readJson = async (file: string) => {
+    try {
+      return parse(await readFile(file, "utf8"));
+    } catch {
+      return null;
+    }
+  };
   return {
     async read(params: URLSearchParams) {
+      const tweaks = (await readJson(tweaksFile(params))) ?? {};
+      let pending = 0;
       try {
-        return await readFile(tweaksFile(params), "utf8");
+        pending = (await readdir(outbox(params))).filter((f) => f.endsWith(".json")).length;
       } catch {
-        return "{}";
+        // No outbox yet: nothing pending.
       }
+      return JSON.stringify({ ...tweaks, _inbox: { pending, reply: await readJson(replyFile(params)) } });
     },
     async write(params: URLSearchParams, data: object) {
+      // The hand-off fields belong to the server and the agent, never to the browser's copy.
+      const { _inbox: _ignored, reply: _old, ...rest } = data as Record<string, unknown>;
       await mkdir(root, { recursive: true });
-      await writeFile(tweaksFile(params), `${JSON.stringify(data, null, 2)}\n`);
+      await writeFile(tweaksFile(params), `${JSON.stringify(rest, null, 2)}\n`);
     },
     /** One file per send, so a second send while the agent is still working never overwrites the first. */
     async send(params: URLSearchParams, data: object) {
-      const box = path.join(root, name(params) ? `outbox-${name(params)}` : "outbox");
+      const box = outbox(params);
       await mkdir(box, { recursive: true });
       await writeFile(path.join(box, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`), `${JSON.stringify(data, null, 2)}\n`);
     },

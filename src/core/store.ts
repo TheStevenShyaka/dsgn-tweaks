@@ -50,11 +50,31 @@ export type Tweaks = {
   styles: StyleEdit[];
   /** Queued notes for Claude: anything the panel can't express. */
   messages: Message[];
-  /** Set when the batch is sent to Claude; `reply` is Claude's answer once it is implemented. */
-  sent?: { at: string; count: number; fingerprint?: string };
-  reply?: { at: string; text: string };
+  /** The last batch handed to the agent. Its edits stay applied (marked as sent) until the agent finishes it. */
+  sent?: SentBatch;
+  /** `at` of the agent reply the person closed. */
+  dismissedReply?: string;
   updatedAt: string;
 };
+
+export type SentBatch = {
+  at: string;
+  count: number;
+  /** What went in the batch, so the panel can mark it and clean it up once implemented. */
+  ids: { text: string[]; styles: string[]; messages: string[] };
+  tokens: Tweaks["tokens"];
+  sections: Tweaks["sections"];
+  /** The agent finished it and the panel removed its edits. */
+  done?: boolean;
+};
+
+export type Reply = { at: string; text: string };
+
+/**
+ * What the server knows about the hand-off, read on every poll and never written by the browser:
+ * how many sent batches are still waiting in .design/outbox/, and the agent's last reply (.design/reply.json).
+ */
+export type Inbox = { pending: number; reply: Reply | null };
 
 export const EMPTY: Tweaks = {
   readme:
@@ -84,7 +104,12 @@ function endpoint(extra = "") {
 }
 
 let state: Tweaks = EMPTY;
+let inbox: Inbox = { pending: 0, reply: null };
 let status: SaveStatus = "loading";
+/** When the last Send finished; only polls started after it can say the batch is done. */
+let sentAt = 0;
+/** Whether the inbox reflects the last Send (false between a Send and the first poll that started after it). */
+let inboxFresh = true;
 let local = false;
 const listeners = new Set<() => void>();
 let channel: BroadcastChannel | null = null;
@@ -106,6 +131,7 @@ export function subscribe(listener: () => void) {
 }
 
 export const getTweaks = () => state;
+export const getInbox = () => inbox;
 export const getStatus = () => status;
 export const isLocal = () => local;
 
@@ -124,6 +150,8 @@ function normalise(raw: unknown): Tweaks {
     text: Array.isArray(t.text) ? t.text : [],
     styles: Array.isArray(t.styles) ? t.styles : [],
     messages: Array.isArray(t.messages) ? t.messages : legacy,
+    // Batches from before ids were tracked can't be cleaned up: forget them.
+    sent: t.sent && Array.isArray((t.sent as Partial<SentBatch>).ids?.text) ? t.sent : undefined,
   };
 }
 
@@ -164,10 +192,12 @@ export function start(writer: boolean) {
   }
   if (getConfig().storage === "browser") return goLocal();
 
-  const pull = (first: boolean) =>
-    fetch(endpoint(), { cache: "no-store" })
+  const pull = (first: boolean) => {
+    const startedAt = Date.now();
+    return fetch(endpoint(), { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((data) => {
+      .then(({ _inbox, ...data }) => {
+        if (_inbox) readInbox(_inbox, startedAt > sentAt);
         // Never clobber an edit that is still waiting to be written.
         // Only adopt a strictly newer version, so a slow poll can't roll back a save that just landed.
         if (!first && (status === "saving" || !(String(data?.updatedAt ?? "") > synced))) return;
@@ -175,6 +205,7 @@ export function start(writer: boolean) {
         synced = state.updatedAt;
         status = "saved";
         emit();
+        settle();
       })
       .catch(() => {
         if (!first) return;
@@ -183,6 +214,7 @@ export function start(writer: boolean) {
           emit();
         } else goLocal();
       });
+  };
   pull(true).then(() => {
     // Pick up the file changing on disk: another tab, or the agent clearing it after implementing a batch.
     if (!writer || local) return;
@@ -241,11 +273,79 @@ function download(snapshot: Tweaks) {
   navigator.clipboard?.writeText(json).catch(() => {});
 }
 
-/** Hands the whole batch to the agent: the dev server drops a snapshot in .design/outbox/, which the agent watches. */
+function readInbox(raw: Partial<Inbox>, fresh: boolean) {
+  const next: Inbox = { pending: Number(raw.pending) || 0, reply: raw.reply?.at ? raw.reply : null };
+  if (next.pending !== inbox.pending || next.reply?.at !== inbox.reply?.at) {
+    inbox = next;
+    emit();
+  }
+  if (fresh) {
+    inboxFresh = true;
+    settle();
+  }
+}
+
+/** The agent finished the batch (it left the outbox): drop what it implemented, keep anything newer. */
+function settle() {
+  const batch = state.sent;
+  if (local || !batch || batch.done || !inboxFresh || inbox.pending > 0) return;
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  update((t) => {
+    const tokens = { light: { ...t.tokens.light }, dark: { ...t.tokens.dark } };
+    for (const theme of ["light", "dark"] as const)
+      for (const [k, v] of Object.entries(batch.tokens[theme])) if (tokens[theme][k] === v) delete tokens[theme][k];
+    return {
+      ...t,
+      text: t.text.filter((e) => !batch.ids.text.includes(e.id)),
+      styles: t.styles.filter((e) => !batch.ids.styles.includes(e.id)),
+      tokens,
+      sections: same(t.sections, batch.sections) ? { order: [], hidden: [] } : t.sections,
+      sent: { ...batch, done: true },
+    };
+  });
+}
+
+/** Edits already handed over in a batch that isn't finished yet. */
+export const isSent = (t: Tweaks, kind: "text" | "styles", id: string) => !!t.sent && !t.sent.done && t.sent.ids[kind].includes(id);
+
+/** Everything not yet handed over: what the next Send would contain. */
+export function unsent(t: Tweaks) {
+  const open = t.sent && !t.sent.done ? t.sent : null;
+  const tokensChanged = (theme: "light" | "dark") =>
+    Object.fromEntries(Object.entries(t.tokens[theme]).filter(([k, v]) => open?.tokens[theme][k] !== v));
+  const sectionsChanged = !open || JSON.stringify(open.sections) !== JSON.stringify(t.sections);
+  return {
+    text: t.text.filter((e) => !open?.ids.text.includes(e.id)),
+    styles: t.styles.filter((e) => !open?.ids.styles.includes(e.id)),
+    messages: t.messages,
+    tokens: { light: tokensChanged("light"), dark: tokensChanged("dark") },
+    sections: sectionsChanged ? t.sections : { order: [], hidden: [] },
+  };
+}
+
+export const unsentCount = (t: Tweaks) => changeCount({ ...t, ...unsent(t) });
+
+/**
+ * Hands everything queued to the agent as one batch: the dev server drops it in .design/outbox/
+ * (the agent watches that folder); without a server it downloads. Messages leave the queue; visual
+ * edits stay applied, marked as sent, until the agent has put them in the code.
+ */
 export async function send() {
   const at = new Date().toISOString();
-  const sent = { at, count: changeCount(state), fingerprint: fingerprint(state) };
-  const snapshot = { ...state, sent };
+  const part = unsent(state);
+  const previous = state.sent && !state.sent.done ? state.sent.ids : { text: [], styles: [], messages: [] };
+  const batch: SentBatch = {
+    at,
+    count: changeCount({ ...state, ...part }),
+    ids: {
+      text: [...previous.text, ...part.text.map((e) => e.id)],
+      styles: [...previous.styles, ...part.styles.map((e) => e.id)],
+      messages: part.messages.map((m) => m.id),
+    },
+    tokens: state.tokens,
+    sections: state.sections,
+  };
+  const snapshot = { ...state, ...part, sent: batch };
   if (local) download(snapshot);
   else {
     const r = await fetch(endpoint("send=1"), {
@@ -254,19 +354,15 @@ export async function send() {
       body: JSON.stringify(snapshot, null, 2),
     });
     if (!r.ok) throw new Error(`Send failed (${r.status})`);
+    sentAt = Date.now();
+    inboxFresh = false;
+    inbox = { ...inbox, pending: inbox.pending + 1 };
   }
-  update((t) => ({ ...t, sent }));
+  update((t) => ({ ...t, messages: t.messages.filter((m) => !batch.ids.messages.includes(m.id)), sent: batch }));
 }
 
-/** Identifies the batch content, so the panel knows whether anything changed since the last send. */
-export const fingerprint = (t: Tweaks) =>
-  JSON.stringify([t.text, t.styles, t.tokens, t.sections, t.messages.map((m) => m.text)]);
-
-/** True when the current changes are exactly what was last sent. */
-export const alreadySent = (t: Tweaks) => !!t.sent?.fingerprint && t.sent.fingerprint === fingerprint(t);
-
-/** Sent and not yet answered. */
-export const isPending = (t: Tweaks) => !!t.sent && (!t.reply || t.reply.at < t.sent.at);
+/** A batch is with the agent right now (server mode only). */
+export const isPending = () => !local && inbox.pending > 0;
 
 export function changeCount(t: Tweaks) {
   return (
