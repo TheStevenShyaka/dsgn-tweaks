@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "example": "npm run dev --workspace example"
+    "example": "pnpm --filter design-tweaks-example dev"
   },
   "peerDependencies": {
     "lucide-react": ">=0.460.0",
@@ -32,8 +32,5 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "typescript": "^5"
-  },
-  "workspaces": [
-    "example"
-  ]
+  }
 }
