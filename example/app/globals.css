@@ -1,0 +1,22 @@
+@import "tailwindcss";
+/* Let Tailwind see the panel's classes (in a host app: "../node_modules/design-tweaks/src"). */
+@source "../../src";
+
+@theme {
+  --color-paper: #fafaf9;
+  --color-pitch: #0a0a0a;
+  --color-hairline: #0a0a0a14;
+  --color-accent: #f65009;
+  --color-on-accent: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  --color-paper: #0a0a0a;
+  --color-pitch: #fafaf9;
+  --color-hairline: #ffffff1a;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-pitch);
+}
