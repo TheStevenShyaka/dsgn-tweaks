@@ -1,5 +1,5 @@
 @import "tailwindcss";
-/* Let Tailwind see the panel's classes (in a host app: "../node_modules/design-tweaks/src"). */
+/* Let Tailwind see the panel's classes (in a host app: "../node_modules/dsgn-tweaks/src"). */
 @source "../../src";
 
 @theme {

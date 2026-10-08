@@ -1,4 +1,4 @@
-# Design Tweaks
+# dsgn-tweaks
 
 A dev-only design panel for Next.js pages. Open it on your local server and design directly on the real page:
 
@@ -20,7 +20,7 @@ Next.js 15+ (App Router), React 19, Tailwind CSS v4 and `lucide-react`.
 ## Install
 
 ```bash
-pnpm add -D github:TheStevenShyaka/design-tweaks
+pnpm add -D github:TheStevenShyaka/dsgn-tweaks
 ```
 
 ### 1. Next config
@@ -29,7 +29,7 @@ The package ships TypeScript source:
 
 ```ts
 // next.config.ts
-const nextConfig = { transpilePackages: ["design-tweaks"] };
+const nextConfig = { transpilePackages: ["dsgn-tweaks"] };
 ```
 
 ### 2. Tailwind
@@ -37,14 +37,14 @@ const nextConfig = { transpilePackages: ["design-tweaks"] };
 Tailwind needs to see the panel's classes. Add this to the CSS file that imports Tailwind (adjust the relative path):
 
 ```css
-@source "../node_modules/design-tweaks/src";
+@source "../node_modules/dsgn-tweaks/src";
 ```
 
 ### 3. Route
 
 ```ts
 // app/api/design/route.ts
-import { createDesignRoute } from "design-tweaks/server";
+import { createDesignRoute } from "dsgn-tweaks/server";
 
 export const dynamic = "force-dynamic";
 export const { GET, PUT, POST } = createDesignRoute();
@@ -55,7 +55,7 @@ export const { GET, PUT, POST } = createDesignRoute();
 ```tsx
 // app/page.tsx (or a layout)
 import { Suspense } from "react";
-import { DesignTweaks } from "design-tweaks";
+import { DesignTweaks } from "dsgn-tweaks";
 
 {process.env.NODE_ENV === "development" && (
   <Suspense>
@@ -84,7 +84,7 @@ Press **⌥D** (Option+D on a Mac, Alt+D elsewhere) to open the panel.
 ## Config
 
 ```ts
-import type { DesignTweaksConfig } from "design-tweaks";
+import type { DesignTweaksConfig } from "dsgn-tweaks";
 
 const config: DesignTweaksConfig = {
   // Sections with alternative layouts. Your page reads the search param (?projects=index) and renders that option.

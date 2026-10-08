@@ -1,12 +1,12 @@
 {
-  "name": "design-tweaks-example",
+  "name": "dsgn-tweaks-example",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3100",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "design-tweaks": "link:..",
+    "dsgn-tweaks": "link:..",
     "lucide-react": "^1.22.0",
     "next": "16.2.9",
     "react": "19.2.4",

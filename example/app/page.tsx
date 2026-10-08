@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { DesignTweaks, type DesignTweaksConfig } from "design-tweaks";
+import { DesignTweaks, type DesignTweaksConfig } from "dsgn-tweaks";
 
 const HERO = [
   { id: "split", label: "Split" },

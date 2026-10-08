@@ -51,7 +51,7 @@ import {
 } from "./engine";
 
 /**
- * Design Tweaks (⌥D): a dev-only panel for trying design changes on a running Next.js page.
+ * dsgn-tweaks (⌥D): a dev-only panel for trying design changes on a running Next.js page.
  * Layout explorations, inline text editing, an element inspector, colour tokens, grid/outline
  * overlays and viewport previews. Changes stay visual, saved to .design/tweaks.json, until Send
  * drops the batch in .design/outbox/ for an agent to implement in the source.
@@ -61,7 +61,7 @@ type Mode = "text" | "inspect" | null;
 type Tab = "layout" | "element" | "theme" | "changes";
 
 const VIEWPORTS = [0, 390, 768, 1024, 1280, 1440];
-const OPEN_KEY = "design-tweaks-open";
+const OPEN_KEY = "dsgn-tweaks-open";
 const BLUE = "#0d99ff";
 
 const uid = () => Math.random().toString(36).slice(2, 10);

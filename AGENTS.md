@@ -1,6 +1,6 @@
-# Implementing a Design Tweaks batch
+# Implementing a dsgn-tweaks batch
 
-For coding agents working in a project that uses Design Tweaks.
+For coding agents working in a project that uses dsgn-tweaks.
 
 ## The trigger
 

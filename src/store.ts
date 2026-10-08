@@ -70,7 +70,7 @@ export const EMPTY: Tweaks = {
 
 export type SaveStatus = "loading" | "saved" | "saving" | "error";
 
-const CHANNEL = "design-tweaks";
+const CHANNEL = "dsgn-tweaks";
 const POLL_MS = 2000;
 
 /** ?designfile=name keeps a separate working file (used by automated checks). */

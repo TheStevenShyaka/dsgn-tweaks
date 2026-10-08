@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import "./globals.css";
 
-export const metadata = { title: "Design Tweaks example" };
+export const metadata = { title: "dsgn-tweaks example" };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

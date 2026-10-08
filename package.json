@@ -1,5 +1,5 @@
 {
-  "name": "design-tweaks",
+  "name": "dsgn-tweaks",
   "version": "0.1.0",
   "description": "A dev-only design panel for Next.js + Tailwind v4 pages: edit text, inspect and restyle elements, swap layouts and tokens live, then send the batch to your coding agent to implement.",
   "type": "module",
@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "example": "pnpm --filter design-tweaks-example dev"
+    "example": "pnpm --filter dsgn-tweaks-example dev"
   },
   "peerDependencies": {
     "lucide-react": ">=0.460.0",

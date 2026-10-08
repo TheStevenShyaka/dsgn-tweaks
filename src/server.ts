@@ -5,7 +5,7 @@ import path from "node:path";
  * Route handlers for the panel's working files. Only answers in development (404 otherwise).
  *
  *   // app/api/design/route.ts
- *   import { createDesignRoute } from "design-tweaks/server";
+ *   import { createDesignRoute } from "dsgn-tweaks/server";
  *   export const dynamic = "force-dynamic";
  *   export const { GET, PUT, POST } = createDesignRoute();
  *
